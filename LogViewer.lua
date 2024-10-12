@@ -1,0 +1,238 @@
+local BUFFER_SIZE = 1024 * 10
+local LOGS_FOLDER = '/LOGS'
+local REGEX_LINES = '([^\n]+)\n'
+local REGEX_LINES_WITHOUT_NEW_LINE = '\n([^\n]+)$'
+local REGEX_CSV_CELL = '[^,]+'
+local REGEX_LOG_EXTENTION = '.csv$'
+local TIME_STRING = '%02d-%02d,%02d:%02d:%02d'
+
+local FirstRun = true
+local CurrentMode = 2 -- 0: File; 1: Row, 2: Column
+local CurrentFileIndex = nil
+local CurrentColumnIndex = nil
+local NumberOfLogFiles = nil
+local CurrentFileName = nil
+local Columns = nil
+local CurrentValue = nil
+local CurrentLineText = ''
+local NumberOfLines = nil
+local CurrentLineIndex = nil
+
+local function getNumberOfLogFiles()
+    local counter = 0
+    for f in dir(LOGS_FOLDER) do
+        if string.match(f, REGEX_LOG_EXTENTION) then
+            counter = counter + 1
+        end
+    end
+    return counter
+end
+
+local function getFileNameByIndex()
+    local fileName = nil
+    local i = 1
+    for f in dir(LOGS_FOLDER) do
+        if string.match(f, REGEX_LOG_EXTENTION) then
+            fileName = f
+            if i == CurrentFileIndex then
+                return fileName
+            end
+            i = i + 1
+        end
+    end
+    return nil
+end
+
+local function getFileTimeString()
+    local info = fstat(LOGS_FOLDER .. '/' .. CurrentFileName)
+    local t = info.time
+    local result = string.format(TIME_STRING, t.mon, t.day, t.hour, t.min, t.sec)
+    return result
+end
+
+local function getCurrentLineTimeString()
+    local result = string.sub(CurrentLineText, 6, 19)
+    return result
+end
+
+local function parseColumns()
+    local f = io.open(LOGS_FOLDER .. '/' .. CurrentFileName)
+    local buffer = io.read(f, BUFFER_SIZE)
+    local columnString = nil
+
+    for line in string.gmatch(buffer, REGEX_LINES) do
+        columnString = line
+        break
+    end
+
+    local columns = {}
+    local columnIndex = 0 -- Used to remove time
+    for columnText in string.gmatch(columnString, REGEX_CSV_CELL) do
+        if columnIndex < 2 then
+            columnIndex = columnIndex + 1
+        else
+            columns[#columns + 1] = columnText
+        end
+    end
+
+    io.close(f)
+
+    return columns
+end
+
+local function getCurrentNumberOfLines()
+    local numberOfLines = 0
+    local f = io.open(LOGS_FOLDER .. '/' .. CurrentFileName)
+    while true do
+        local read = io.read(f, BUFFER_SIZE)
+        if read == "" then
+            io.close(f)
+            break;
+        end
+
+        for i = 1, #read do
+            if string.sub(read, i, i) == "\n" then
+                numberOfLines = numberOfLines + 1
+            end
+        end
+    end
+    return numberOfLines - 1 -- Remove the column name line
+end
+
+local function readCurrentLine()
+    local result = ''
+    local isFound = false
+    local lineNumberIndex = 0
+    local f = io.open(LOGS_FOLDER .. '/' .. CurrentFileName)
+    local bufferFromPrevious = ''
+    while not isFound do
+        local read = bufferFromPrevious .. io.read(f, BUFFER_SIZE)
+
+        for line in string.gmatch(read, REGEX_LINES) do
+            if lineNumberIndex == CurrentLineIndex then
+                result = line
+                isFound = true
+                io.close(f)
+                break
+            end
+
+            lineNumberIndex = lineNumberIndex + 1
+        end
+
+        for m in string.gmatch(read, REGEX_LINES_WITHOUT_NEW_LINE) do
+            bufferFromPrevious = m
+        end
+    end
+    return result
+end
+
+local function getCurrentValue()
+    local value = nil
+    local i = -1 -- Substract to ignore the date and time columns
+    for valueText in string.gmatch(CurrentLineText, REGEX_CSV_CELL) do
+        if i == CurrentColumnIndex then
+            value = valueText
+            break
+        end
+        i = i + 1
+    end
+
+    return value
+end
+
+local function draw()
+    lcd.clear()
+    lcd.drawText(1, 0, "Log Viewer                            ", INVERS)
+
+    local fileText = string.format('F: %s/%s', CurrentFileIndex, NumberOfLogFiles)
+    local lineText = string.format('L: %s/%s', CurrentLineIndex, NumberOfLines)
+    local columnText = string.format('C: %s/%s', CurrentColumnIndex, #Columns)
+
+    lcd.drawText(1, 12, fileText, (CurrentMode == 0 and INVERS or 0))
+    lcd.drawText(60, 12, getFileTimeString(), SMLSIZE)
+
+    lcd.drawText(1, 24, lineText, (CurrentMode == 1 and INVERS or 0))
+    lcd.drawText(60, 24, getCurrentLineTimeString(), SMLSIZE)
+
+    lcd.drawText(1, 36, columnText, (CurrentMode == 2 and INVERS or 0))
+    lcd.drawText(60, 36, Columns[CurrentColumnIndex])
+    lcd.drawText(1, 50, CurrentValue)
+end
+
+local function handleRotEvents(event)
+    if CurrentMode == 0 then
+        if event == EVT_ROT_RIGHT and CurrentFileIndex + 1 <= NumberOfLogFiles then
+            CurrentFileIndex = CurrentFileIndex + 1
+        elseif event == EVT_ROT_LEFT and 1 < CurrentFileIndex then
+            CurrentFileIndex = CurrentFileIndex - 1
+        end
+
+        CurrentFileName  = getFileNameByIndex()
+        NumberOfLines    = getCurrentNumberOfLines()
+        CurrentLineIndex = NumberOfLines  -- Go the the last line
+        Columns          = parseColumns() -- In case we have files with different telemetry settings
+
+        -- Reset if out of range
+        if CurrentColumnIndex + 1 > #Columns then
+            CurrentColumnIndex = 1
+        end
+
+        CurrentLineText = readCurrentLine()
+        CurrentValue    = getCurrentValue()
+    elseif CurrentMode == 1 then
+        if event == EVT_ROT_RIGHT and CurrentLineIndex + 1 <= NumberOfLines then
+            CurrentLineIndex = CurrentLineIndex + 1
+        elseif event == EVT_ROT_LEFT and 1 < CurrentLineIndex then
+            CurrentLineIndex = CurrentLineIndex - 1
+        end
+
+        CurrentLineText = readCurrentLine()
+        CurrentValue    = getCurrentValue()
+    elseif CurrentMode == 2 then
+        if event == EVT_ROT_RIGHT and CurrentColumnIndex + 1 <= #Columns then
+            CurrentColumnIndex = CurrentColumnIndex + 1
+        elseif event == EVT_ROT_LEFT and 1 < CurrentColumnIndex then
+            CurrentColumnIndex = CurrentColumnIndex - 1
+        end
+
+        CurrentValue = getCurrentValue()
+    end
+end
+
+local function handleEvents(event)
+    if event == EVT_ROT_LEFT or event == EVT_ROT_RIGHT then
+        handleRotEvents(event)
+        draw()
+    elseif event == EVT_EXIT_BREAK then
+        CurrentMode = CurrentMode - 1
+        if CurrentMode < 0 then
+            CurrentMode = 2
+        end
+        draw()
+    end
+end
+
+local function init()
+    NumberOfLogFiles   = getNumberOfLogFiles()
+    CurrentFileIndex   = NumberOfLogFiles -- Go the the last line
+    CurrentColumnIndex = 1
+    CurrentFileName    = getFileNameByIndex()
+    Columns            = parseColumns()
+    NumberOfLines      = getCurrentNumberOfLines()
+    CurrentLineIndex   = NumberOfLines
+    CurrentLineText    = readCurrentLine()
+    CurrentValue       = getCurrentValue()
+end
+
+local function run(event)
+    if FirstRun then
+        draw()
+        FirstRun = false
+    end
+
+    handleEvents(event)
+
+    return 0
+end
+
+return { init = init, run = run }
