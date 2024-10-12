@@ -1,0 +1,1 @@
+EdgeTX LUA script for BW radios to read logs files on the display. Tested with RadioMaster BOXER radio. Rotary wheel is used to change the read value. Back is used to switch between modes. i.e., changing columns, rows or files.
