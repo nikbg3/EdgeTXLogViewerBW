@@ -243,7 +243,6 @@ local function drawChartByValues(values, minV, maxV)
     for i = CHART_X_MIN, CHART_X_MAX - CHART_LINE_SIZE, CHART_LINE_SIZE do
         local range = CHART_Y_MAX - CHART_Y_MIN
 
-
         local weightedValue1 = range - (range * ((values[math.min(#values, counter)] - minV) / (maxV - minV))) +
             CHART_Y_MIN
         local weightedValue2 = range - (range * ((values[math.min(#values, counter + 1)] - minV) / (maxV - minV))) +
