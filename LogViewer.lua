@@ -252,8 +252,9 @@ local function drawChartByValues(values, minV, maxV)
         counter = counter + 1
     end
 
-    lcd.drawText(0, 8, string.format('%.2f%s', maxV, ColumnsMU[CurrentColumnIndex]), INVERS + SMLSIZE)
-    lcd.drawText(0, 58, string.format('%.2f%s', minV, ColumnsMU[CurrentColumnIndex]), INVERS + SMLSIZE)
+    -- TODO: Don't show .00 if not needed. Manage when value too big?
+    lcd.drawText(1, 9, string.format('%.2f%s', maxV, ColumnsMU[CurrentColumnIndex]), SMLSIZE)
+    lcd.drawText(1, 57, string.format('%.2f%s', minV, ColumnsMU[CurrentColumnIndex]), SMLSIZE)
 end
 
 local function drawChart()
