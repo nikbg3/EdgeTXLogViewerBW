@@ -274,7 +274,7 @@ local function drawChart()
     -- TODO: I should be able to draw values even if before this treshold
     local minValues = (CHART_X_MAX - CHART_Y_MIN) / CHART_LINE_SIZE
     if #values < minValues then
-        lcd.drawText(19, 28, "Too little values")
+        lcd.drawText(19, 28, "Too few values")
         return
     end
 
