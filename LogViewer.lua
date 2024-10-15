@@ -1,18 +1,26 @@
 local BUFFER_SIZE = 1024 * 10
 local LOGS_FOLDER = '/LOGS'
 local REGEX_LINES = '([^\n]+)\n'
-local REGEX_LINES_WITHOUT_NEW_LINE = '\n([^\n]+)$'
+local REGEX_LINES_WITHOUT_NEW_LINE = '\n([^\n]*)$'
 local REGEX_CSV_CELL = '[^,]+'
 local REGEX_LOG_EXTENTION = '.csv$'
+local REGEX_COLUMN_MU = '^(.-)%s*%((.-)%)$'
 local TIME_STRING = '%02d-%02d,%02d:%02d:%02d'
+local CHART_X_MIN = 0
+local CHART_X_MAX = 128
+local CHART_Y_MIN = 10
+local CHART_Y_MAX = 63
+local CHART_LINE_SIZE = 3
 
 local FirstRun = true
 local CurrentMode = 2 -- 0: File; 1: Row, 2: Column
+local IsShowingChart = false
 local CurrentFileIndex = nil
 local CurrentColumnIndex = nil
 local NumberOfLogFiles = nil
 local CurrentFileName = nil
 local Columns = nil
+local ColumnsMU = nil
 local CurrentValue = nil
 local CurrentLineText = ''
 local NumberOfLines = nil
@@ -66,18 +74,26 @@ local function parseColumns()
     end
 
     local columns = {}
+    local columnsMU = {}
     local columnIndex = 0 -- Used to remove time
     for columnText in string.gmatch(columnString, REGEX_CSV_CELL) do
         if columnIndex < 2 then
             columnIndex = columnIndex + 1
         else
-            columns[#columns + 1] = columnText
+            local name, unit = string.match(columnText, REGEX_COLUMN_MU)
+            if name ~= nil and unit ~= nil then
+                columns[#columns + 1] = name
+                columnsMU[#columnsMU + 1] = unit
+            else
+                columns[#columns + 1] = columnText
+                columnsMU[#columnsMU + 1] = ''
+            end
         end
     end
 
     io.close(f)
 
-    return columns
+    return columns, columnsMU
 end
 
 local function getCurrentNumberOfLines()
@@ -85,9 +101,9 @@ local function getCurrentNumberOfLines()
     local f = io.open(LOGS_FOLDER .. '/' .. CurrentFileName)
     while true do
         local read = io.read(f, BUFFER_SIZE)
-        if read == "" then
+        if #read == 0 then
             io.close(f)
-            break;
+            break
         end
 
         for i = 1, #read do
@@ -126,10 +142,10 @@ local function readCurrentLine()
     return result
 end
 
-local function getCurrentValue()
+local function getValueByLine(line)
     local value = nil
     local i = -1 -- Substract to ignore the date and time columns
-    for valueText in string.gmatch(CurrentLineText, REGEX_CSV_CELL) do
+    for valueText in string.gmatch(line, REGEX_CSV_CELL) do
         if i == CurrentColumnIndex then
             value = valueText
             break
@@ -140,13 +156,140 @@ local function getCurrentValue()
     return value
 end
 
+local function getCurrentValue()
+    return getValueByLine(CurrentLineText)
+end
+
+local function getAllCurrentValues() -- returns nil if non convertable to a number
+    local values = {}
+    local f = io.open(LOGS_FOLDER .. '/' .. CurrentFileName)
+    local bufferFromPrevious = ''
+    local isColumnRow = true
+
+    while true do
+        local read = bufferFromPrevious .. io.read(f, BUFFER_SIZE)
+        if #read == 0 then
+            io.close(f)
+            break
+        end
+
+        for line in string.gmatch(read, REGEX_LINES) do
+            if isColumnRow then
+                isColumnRow = false
+            else
+                local value = tonumber(getValueByLine(line))
+                if value == nil then -- Not convertable to a number
+                    return nil
+                end
+
+                values[#values + 1] = value
+            end
+        end
+
+        for m in string.gmatch(read, REGEX_LINES_WITHOUT_NEW_LINE) do
+            bufferFromPrevious = m
+        end
+    end
+
+    return values
+end
+
+local function findMinMax(array)
+    if #array == 0 then
+        return nil, nil -- Return nil if the array is empty
+    end
+
+    local min = array[1]
+    local max = array[1]
+
+    for i = 2, #array do
+        if array[i] < min then
+            min = array[i]
+        end
+        if array[i] > max then
+            max = array[i]
+        end
+    end
+    return min, max
+end
+
+local function drawHeader()
+    lcd.drawText(1, 0, "Log Viewer                            ", INVERS)
+end
+
+local function getChartValuesAll(values)
+    local numberOfValuesPerPoint = math.floor((#values * CHART_LINE_SIZE) / (CHART_X_MAX - CHART_X_MIN))
+
+    local avgValues = {}
+    for i = 1, CHART_X_MAX - CHART_X_MIN, numberOfValuesPerPoint do
+        local acc = 0
+        local startJ = i
+        local endJ = i + numberOfValuesPerPoint
+        endJ = math.min(endJ, #values)
+
+        for j = startJ, endJ do
+            acc = acc + values[j]
+        end
+        local currentValue = acc / (endJ - startJ + 1)
+        avgValues[#avgValues + 1] = currentValue
+    end
+
+    local minV, maxV = findMinMax(avgValues) -- TODO: Remove outliners because of bad telemetry signal
+    return avgValues, minV, maxV
+end
+
+local function drawChartByValues(values, minV, maxV)
+    local counter = 1;
+    for i = CHART_X_MIN, CHART_X_MAX - CHART_LINE_SIZE, CHART_LINE_SIZE do
+        local range = CHART_Y_MAX - CHART_Y_MIN
+
+
+        local weightedValue1 = range - (range * ((values[math.min(#values, counter)] - minV) / (maxV - minV))) +
+            CHART_Y_MIN
+        local weightedValue2 = range - (range * ((values[math.min(#values, counter + 1)] - minV) / (maxV - minV))) +
+            CHART_Y_MIN
+
+        lcd.drawLine(i, weightedValue1, math.min(CHART_LINE_SIZE + i, CHART_X_MAX), weightedValue2, SOLID, 0)
+        counter = counter + 1
+    end
+
+    lcd.drawText(0, 8, string.format('%.2f%s', maxV, ColumnsMU[CurrentColumnIndex]), INVERS + SMLSIZE)
+    lcd.drawText(0, 58, string.format('%.2f%s', minV, ColumnsMU[CurrentColumnIndex]), INVERS + SMLSIZE)
+end
+
+local function drawChart()
+    local values = getAllCurrentValues()
+
+    lcd.clear()
+    drawHeader()
+
+    if values == nil or #values == 0 then
+        lcd.drawText(11, 28, "No numeric available")
+        return
+    end
+
+    -- TODO: Zoom into values
+    -- TODO: Show current value when scrolling
+
+    -- TODO: I should be able to draw values even if before this treshold
+    local minValues = (CHART_X_MAX - CHART_Y_MIN) / CHART_LINE_SIZE
+    if #values < minValues then
+        lcd.drawText(19, 28, "Too little values")
+        return
+    end
+
+    local avgValues, minV, maxV = getChartValuesAll(values)
+
+    drawChartByValues(avgValues, minV, maxV)
+end
+
 local function draw()
     lcd.clear()
-    lcd.drawText(1, 0, "Log Viewer                            ", INVERS)
-
     local fileText = string.format('F: %s/%s', CurrentFileIndex, NumberOfLogFiles)
     local lineText = string.format('L: %s/%s', CurrentLineIndex, NumberOfLines)
     local columnText = string.format('C: %s/%s', CurrentColumnIndex, #Columns)
+
+    drawHeader()
 
     lcd.drawText(1, 12, fileText, (CurrentMode == 0 and INVERS or 0))
     lcd.drawText(60, 12, getFileTimeString(), SMLSIZE)
@@ -156,10 +299,10 @@ local function draw()
 
     lcd.drawText(1, 36, columnText, (CurrentMode == 2 and INVERS or 0))
     lcd.drawText(60, 36, Columns[CurrentColumnIndex])
-    lcd.drawText(1, 50, CurrentValue)
+    lcd.drawText(1, 50, CurrentValue .. ColumnsMU[CurrentColumnIndex])
 end
 
-local function handleRotEvents(event)
+local function handleRotRotateEvents(event)
     if CurrentMode == 0 then
         if event == EVT_ROT_RIGHT and CurrentFileIndex + 1 <= NumberOfLogFiles then
             CurrentFileIndex = CurrentFileIndex + 1
@@ -167,10 +310,10 @@ local function handleRotEvents(event)
             CurrentFileIndex = CurrentFileIndex - 1
         end
 
-        CurrentFileName  = getFileNameByIndex()
-        NumberOfLines    = getCurrentNumberOfLines()
-        CurrentLineIndex = NumberOfLines  -- Go the the last line
-        Columns          = parseColumns() -- In case we have files with different telemetry settings
+        CurrentFileName = getFileNameByIndex()
+        NumberOfLines = getCurrentNumberOfLines()
+        CurrentLineIndex = NumberOfLines    -- Go the the last line
+        Columns, ColumnsMU = parseColumns() -- In case we have files with different telemetry settings
 
         -- Reset if out of range
         if CurrentColumnIndex + 1 > #Columns then
@@ -178,7 +321,7 @@ local function handleRotEvents(event)
         end
 
         CurrentLineText = readCurrentLine()
-        CurrentValue    = getCurrentValue()
+        CurrentValue = getCurrentValue()
     elseif CurrentMode == 1 then
         if event == EVT_ROT_RIGHT and CurrentLineIndex + 1 <= NumberOfLines then
             CurrentLineIndex = CurrentLineIndex + 1
@@ -187,7 +330,7 @@ local function handleRotEvents(event)
         end
 
         CurrentLineText = readCurrentLine()
-        CurrentValue    = getCurrentValue()
+        CurrentValue = getCurrentValue()
     elseif CurrentMode == 2 then
         if event == EVT_ROT_RIGHT and CurrentColumnIndex + 1 <= #Columns then
             CurrentColumnIndex = CurrentColumnIndex + 1
@@ -201,27 +344,42 @@ end
 
 local function handleEvents(event)
     if event == EVT_ROT_LEFT or event == EVT_ROT_RIGHT then
-        handleRotEvents(event)
+        if IsShowingChart then
+            return -- TODO: Will be handled when zooming mode is present
+        end
+        handleRotRotateEvents(event)
         draw()
     elseif event == EVT_EXIT_BREAK then
-        CurrentMode = CurrentMode - 1
-        if CurrentMode < 0 then
-            CurrentMode = 2
+        if not IsShowingChart then
+            CurrentMode = CurrentMode - 1
+            if CurrentMode < 0 then
+                CurrentMode = 2
+            end
+        else
+            IsShowingChart = false
         end
         draw()
+    elseif event == EVT_ROT_BREAK then
+        if IsShowingChart then
+            IsShowingChart = false
+            draw()
+        else
+            IsShowingChart = true
+            drawChart()
+        end
     end
 end
 
 local function init()
-    NumberOfLogFiles   = getNumberOfLogFiles()
-    CurrentFileIndex   = NumberOfLogFiles -- Go the the last line
+    NumberOfLogFiles = getNumberOfLogFiles()
+    CurrentFileIndex = NumberOfLogFiles -- Go the the last line
     CurrentColumnIndex = 1
-    CurrentFileName    = getFileNameByIndex()
-    Columns            = parseColumns()
-    NumberOfLines      = getCurrentNumberOfLines()
-    CurrentLineIndex   = NumberOfLines
-    CurrentLineText    = readCurrentLine()
-    CurrentValue       = getCurrentValue()
+    CurrentFileName = getFileNameByIndex()
+    Columns, ColumnsMU = parseColumns()
+    NumberOfLines = getCurrentNumberOfLines()
+    CurrentLineIndex = NumberOfLines
+    CurrentLineText = readCurrentLine()
+    CurrentValue = getCurrentValue()
 end
 
 local function run(event)
@@ -235,4 +393,7 @@ local function run(event)
     return 0
 end
 
-return { init = init, run = run }
+return {
+    init = init,
+    run = run
+}
