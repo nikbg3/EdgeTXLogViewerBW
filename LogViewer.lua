@@ -10,6 +10,7 @@ local CHART_X_MIN = 0
 local CHART_X_MAX = 128
 local CHART_Y_MIN = 16
 local CHART_Y_MAX = 55
+local SLIDER_SIZE = 12
 local CHART_LINE_SIZE_MIN = 3
 local ChartLineSize = 3
 
@@ -26,6 +27,7 @@ local CurrentValue = nil
 local CurrentLineText = ''
 local NumberOfLines = nil
 local CurrentLineIndex = nil
+local SliderPosition = CHART_X_MAX - 1
 
 local function getNumberOfLogFiles()
     local counter = 0
@@ -195,15 +197,15 @@ local function getAllCurrentValues() -- returns nil if non convertable to a numb
     return values
 end
 
-local function findMinMax(array)
-    if #array == 0 then
-        return nil, nil -- Return nil if the array is empty
+local function findMinMaxHelper(array, startI, endI)
+    if startI < 1 then
+        startI = 1
     end
 
-    local min = array[1]
-    local max = array[1]
+    local min = array[startI]
+    local max = array[startI]
 
-    for i = 2, #array do
+    for i = startI + 1, endI do
         if array[i] < min then
             min = array[i]
         end
@@ -212,6 +214,14 @@ local function findMinMax(array)
         end
     end
     return min, max
+end
+
+local function findMinMax(array)
+    if #array == 0 then
+        return nil, nil -- Return nil if the array is empty
+    end
+
+    return findMinMaxHelper(array, 1, #array)
 end
 
 local function formatNumber(num)
@@ -237,7 +247,7 @@ local function normalizeOutliers(values)
 
     local currentNumbOfValues = 0
     for i = 1, maxLength do                          -- Find abnormal length of numbers
-        if currentNumbOfValues / #values > 0.95 then -- Above 95% with bigger digit count most likely are outliers
+        if currentNumbOfValues / #values > 0.90 then -- Above 90% with bigger digit count most likely are outliers
             lengthToNorm = i
             break
         end
@@ -308,6 +318,13 @@ local function drawChartByValues(values, minV, maxV)
     lcd.drawText(1, 57, formatNumber(minV) .. ColumnsMU[CurrentColumnIndex], SMLSIZE)
 end
 
+local function getMixMaxInCurrentSlice(values)
+    local minIndex = math.ceil(#values * ((SliderPosition - SLIDER_SIZE) / 164))
+    local maxIndex = math.floor(#values * (SliderPosition / 164))
+
+    return findMinMaxHelper(values, minIndex, maxIndex)
+end
+
 local function drawChart()
     local valuesUnfiltered = getAllCurrentValues()
     local values = normalizeOutliers(valuesUnfiltered)
@@ -319,9 +336,6 @@ local function drawChart()
         lcd.drawText(11, 28, "No numeric available")
         return
     end
-
-    -- TODO: Zoom into values
-    -- TODO: Show current value when scrolling
 
     if #values == 1 then -- We have just a single value. Add one extra for the drawing
         values[#values + 1] = values[1]
@@ -342,9 +356,17 @@ local function drawChart()
     end
 
     drawChartByValues(avgValues, minV, maxV)
+
+    -- Draw the slider line
+    lcd.drawLine(SliderPosition - SLIDER_SIZE, 8, SliderPosition - SLIDER_SIZE, 64, DOTTED, 0)
+    lcd.drawLine(SliderPosition, 8, SliderPosition, 64, DOTTED, 0)
+
+    local min, max = getMixMaxInCurrentSlice(values)
+    lcd.drawText(90, 9, formatNumber(max) .. ColumnsMU[CurrentColumnIndex], SMLSIZE)
+    lcd.drawText(90, 57, formatNumber(min) .. ColumnsMU[CurrentColumnIndex], SMLSIZE)
 end
 
-local function draw()
+local function drawValueScreen()
     lcd.clear()
     local fileText = string.format('F: %s/%s', CurrentFileIndex, NumberOfLogFiles)
     local lineText = string.format('L: %s/%s', CurrentLineIndex, NumberOfLines)
@@ -363,7 +385,7 @@ local function draw()
     lcd.drawText(1, 50, CurrentValue .. ColumnsMU[CurrentColumnIndex])
 end
 
-local function handleRotRotateEvents(event)
+local function handleRotRotateEventsValueScreen(event)
     if CurrentMode == 0 then
         if event == EVT_ROT_RIGHT and CurrentFileIndex + 1 <= NumberOfLogFiles then
             CurrentFileIndex = CurrentFileIndex + 1
@@ -406,10 +428,24 @@ end
 local function handleEvents(event)
     if event == EVT_ROT_LEFT or event == EVT_ROT_RIGHT then
         if IsShowingChart then
-            return -- TODO: Will be handled when zooming mode is present
+            if event == EVT_ROT_LEFT then
+                if SLIDER_SIZE >= SliderPosition - SLIDER_SIZE then
+                    SliderPosition = SLIDER_SIZE
+                else
+                    SliderPosition = SliderPosition - SLIDER_SIZE
+                end
+            else
+                if SliderPosition + SLIDER_SIZE >= CHART_X_MAX - 1 then
+                    SliderPosition = CHART_X_MAX - 1
+                else
+                    SliderPosition = SliderPosition + SLIDER_SIZE
+                end
+            end
+            drawChart()
+            return
         end
-        handleRotRotateEvents(event)
-        draw()
+        handleRotRotateEventsValueScreen(event)
+        drawValueScreen()
     elseif event == EVT_EXIT_BREAK then
         if not IsShowingChart then
             CurrentMode = CurrentMode - 1
@@ -418,12 +454,14 @@ local function handleEvents(event)
             end
         else
             IsShowingChart = false
+            SliderPosition = CHART_X_MAX
         end
-        draw()
+        drawValueScreen()
     elseif event == EVT_ROT_BREAK then
         if IsShowingChart then
             IsShowingChart = false
-            draw()
+            SliderPosition = CHART_X_MAX
+            drawValueScreen()
         else
             IsShowingChart = true
             drawChart()
@@ -445,7 +483,7 @@ end
 
 local function run(event)
     if FirstRun then
-        draw()
+        drawValueScreen()
         FirstRun = false
     end
 
