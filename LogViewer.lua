@@ -245,7 +245,7 @@ local function getChartValuesAll(values)
     return avgValues, minV, maxV
 end
 
-function formatNumber(num)
+local function formatNumber(num)
     return string.gsub(string.format("%.2f", num), "%.?0+$", "")
 end
 
@@ -261,10 +261,9 @@ local function drawChartByValues(values, minV, maxV)
         lcd.drawLine(positionX, weightedValue1, endPositionX, weightedValue2, SOLID, 0)
         positionX = positionX + ChartLineSize
     end
-    
-    -- TODO: Don't show .00 if not needed. Manage when value too big - formatNumber
-    lcd.drawText(1, 9, string.format('%.2f%s', maxV, ColumnsMU[CurrentColumnIndex]), SMLSIZE)
-    lcd.drawText(1, 57, string.format('%.2f%s', minV, ColumnsMU[CurrentColumnIndex]), SMLSIZE)
+
+    lcd.drawText(1, 9, formatNumber(maxV) .. ColumnsMU[CurrentColumnIndex], SMLSIZE)
+    lcd.drawText(1, 57, formatNumber(minV) .. ColumnsMU[CurrentColumnIndex], SMLSIZE)
 end
 
 local function drawChart()
@@ -288,7 +287,7 @@ local function drawChart()
     local minValues = (CHART_X_MAX - CHART_Y_MIN) / CHART_LINE_SIZE_MIN
     if #values < minValues then -- We have less values than pixels available
         ChartLineSize = math.ceil((CHART_X_MAX - CHART_Y_MIN) / (#values - 1))
-    else -- We have enough values for the pixels available
+    else                        -- We have enough values for the pixels available
         ChartLineSize = CHART_LINE_SIZE_MIN
     end
 
@@ -331,7 +330,7 @@ local function handleRotRotateEvents(event)
 
         CurrentFileName = getFileNameByIndex()
         NumberOfLines = getCurrentNumberOfLines()
-        CurrentLineIndex = NumberOfLines -- Go the the last line
+        CurrentLineIndex = NumberOfLines    -- Go the the last line
         Columns, ColumnsMU = parseColumns() -- In case we have files with different telemetry settings
 
         -- Reset if out of range
