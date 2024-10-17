@@ -5,6 +5,7 @@ Simple EdgeTX LUA script for BW radios to read logs files on the display. Rotary
 
 **Author:** Nikolay Kolev
 
-![1](https://github.com/user-attachments/assets/dd893ced-7738-41aa-870f-8a3e1991fca4)
+![image](https://github.com/user-attachments/assets/0ad9dfdb-6d67-47b9-a94f-5e15cf63674b)
+
 
 ![2](https://github.com/user-attachments/assets/0d757967-342c-47a9-ae18-856e85e844e5)
