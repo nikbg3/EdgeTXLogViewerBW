@@ -214,6 +214,52 @@ local function findMinMax(array)
     return min, max
 end
 
+local function formatNumber(num)
+    return string.gsub(string.format("%.2f", num), "%.?0+$", "")
+end
+
+local function normalizeOutliers(values)
+    local digitsToFreq = {}
+    local lengthToNorm = nil
+    local maxLength = 1
+    for _, v in ipairs(values) do -- Count numbers with different amount of digits
+        local l = string.len(tostring(math.floor(v)))
+        if digitsToFreq[l] == nil then
+            digitsToFreq[l] = 1
+        else
+            local newLength = digitsToFreq[l] + 1
+            if maxLength < newLength then
+                maxLength = newLength
+            end
+            digitsToFreq[l] = newLength
+        end
+    end
+
+    local currentNumbOfValues = 0
+    for i = 1, maxLength do                          -- Find abnormal length of numbers
+        if currentNumbOfValues / #values > 0.95 then -- Above 95% with bigger digit count most likely are outliers
+            lengthToNorm = i
+            break
+        end
+        if digitsToFreq[i] ~= nil then
+            currentNumbOfValues = currentNumbOfValues + digitsToFreq[i]
+        end
+    end
+
+    if lengthToNorm ~= nil then
+        local prevNumb = 0
+        for i, v in ipairs(values) do -- Normalize them by using the previous number
+            if string.len(tostring(math.floor(v))) >= lengthToNorm then
+                values[i] = prevNumb
+            else
+                prevNumb = v
+            end
+        end
+    end
+
+    return values
+end
+
 local function drawHeader()
     lcd.drawText(1, 0, "Log Viewer                            ", INVERS)
 end
@@ -241,12 +287,8 @@ local function getChartValuesAll(values)
         end
     end
 
-    local minV, maxV = findMinMax(avgValues) -- TODO: Remove outliners because of bad telemetry signal
+    local minV, maxV = findMinMax(avgValues)
     return avgValues, minV, maxV
-end
-
-local function formatNumber(num)
-    return string.gsub(string.format("%.2f", num), "%.?0+$", "")
 end
 
 local function drawChartByValues(values, minV, maxV)
@@ -267,7 +309,8 @@ local function drawChartByValues(values, minV, maxV)
 end
 
 local function drawChart()
-    local values = getAllCurrentValues()
+    local valuesUnfiltered = getAllCurrentValues()
+    local values = normalizeOutliers(valuesUnfiltered)
 
     lcd.clear()
     drawHeader()
