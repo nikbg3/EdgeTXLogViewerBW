@@ -8,9 +8,10 @@ local REGEX_COLUMN_MU = '^(.-)%s*%((.-)%)$'
 local TIME_STRING = '%02d-%02d,%02d:%02d:%02d'
 local CHART_X_MIN = 0
 local CHART_X_MAX = 128
-local CHART_Y_MIN = 10
-local CHART_Y_MAX = 63
-local CHART_LINE_SIZE = 3
+local CHART_Y_MIN = 16
+local CHART_Y_MAX = 55
+local CHART_LINE_SIZE_MIN = 3
+local ChartLineSize = 3
 
 local FirstRun = true
 local CurrentMode = 2 -- 0: File; 1: Row, 2: Column
@@ -218,41 +219,50 @@ local function drawHeader()
 end
 
 local function getChartValuesAll(values)
-    local numberOfValuesPerPoint = math.floor((#values * CHART_LINE_SIZE) / (CHART_X_MAX - CHART_X_MIN))
+    local numberOfValuesPerPoint = math.ceil((#values * ChartLineSize) / (CHART_X_MAX - CHART_X_MIN))
+
+    local isSmallSet = ChartLineSize > CHART_LINE_SIZE_MIN
 
     local avgValues = {}
-    for i = 1, CHART_X_MAX - CHART_X_MIN, numberOfValuesPerPoint do
-        local acc = 0
-        local startJ = i
-        local endJ = i + numberOfValuesPerPoint
-        endJ = math.min(endJ, #values)
-
-        for j = startJ, endJ do
-            acc = acc + values[j]
+    if isSmallSet then
+        for i = 1, #values do
+            avgValues[#avgValues + 1] = values[i]
         end
-        local currentValue = acc / (endJ - startJ + 1)
-        avgValues[#avgValues + 1] = currentValue
+    else
+        for i = 1, #values, numberOfValuesPerPoint do
+            local acc = 0
+            local startJ = i
+            local endJ = math.min(i + numberOfValuesPerPoint, #values)
+            for j = startJ, endJ do
+                acc = acc + values[j]
+            end
+            local currentValue = acc / (endJ - startJ + 1)
+            avgValues[#avgValues + 1] = currentValue
+        end
     end
 
     local minV, maxV = findMinMax(avgValues) -- TODO: Remove outliners because of bad telemetry signal
     return avgValues, minV, maxV
 end
 
+function formatNumber(num)
+    return string.gsub(string.format("%.2f", num), "%.?0+$", "")
+end
+
 local function drawChartByValues(values, minV, maxV)
-    local counter = 1;
-    for i = CHART_X_MIN, CHART_X_MAX - CHART_LINE_SIZE, CHART_LINE_SIZE do
-        local range = CHART_Y_MAX - CHART_Y_MIN
+    local range = CHART_Y_MAX - CHART_Y_MIN
+    local positionX = CHART_X_MIN
+    for i = 1, #values - 1 do
+        local weightedValue1 = (range - (range * ((values[i] - minV) / (maxV - minV)))) + CHART_Y_MIN
+        local weightedValue2 = (range - (range * ((values[i + 1] - minV) / (maxV - minV)))) + CHART_Y_MIN
 
-        local weightedValue1 = range - (range * ((values[math.min(#values, counter)] - minV) / (maxV - minV))) +
-            CHART_Y_MIN
-        local weightedValue2 = range - (range * ((values[math.min(#values, counter + 1)] - minV) / (maxV - minV))) +
-            CHART_Y_MIN
-
-        lcd.drawLine(i, weightedValue1, math.min(CHART_LINE_SIZE + i, CHART_X_MAX), weightedValue2, SOLID, 0)
-        counter = counter + 1
+        -- The last point has to be at the right end of the display
+        local endPositionX = (i == #values - 1) and CHART_X_MAX or ChartLineSize + positionX
+        lcd.drawLine(positionX, weightedValue1, endPositionX, weightedValue2, SOLID, 0)
+        positionX = positionX + ChartLineSize
     end
-
-    -- TODO: Don't show .00 if not needed. Manage when value too big?
+    
+    -- TODO: Don't show .00 if not needed. Manage when value too big - formatNumber
     lcd.drawText(1, 9, string.format('%.2f%s', maxV, ColumnsMU[CurrentColumnIndex]), SMLSIZE)
     lcd.drawText(1, 57, string.format('%.2f%s', minV, ColumnsMU[CurrentColumnIndex]), SMLSIZE)
 end
@@ -271,14 +281,23 @@ local function drawChart()
     -- TODO: Zoom into values
     -- TODO: Show current value when scrolling
 
-    -- TODO: I should be able to draw values even if before this treshold
-    local minValues = (CHART_X_MAX - CHART_Y_MIN) / CHART_LINE_SIZE
-    if #values < minValues then
-        lcd.drawText(19, 28, "Too few values")
-        return
+    if #values == 1 then -- We have just a single value. Add one extra for the drawing
+        values[#values + 1] = values[1]
+    end
+
+    local minValues = (CHART_X_MAX - CHART_Y_MIN) / CHART_LINE_SIZE_MIN
+    if #values < minValues then -- We have less values than pixels available
+        ChartLineSize = math.ceil((CHART_X_MAX - CHART_Y_MIN) / (#values - 1))
+    else -- We have enough values for the pixels available
+        ChartLineSize = CHART_LINE_SIZE_MIN
     end
 
     local avgValues, minV, maxV = getChartValuesAll(values)
+
+    if minV == maxV then -- We have a constant for a value. Spread them a bit
+        minV = minV - 1
+        maxV = maxV + 1
+    end
 
     drawChartByValues(avgValues, minV, maxV)
 end
@@ -312,7 +331,7 @@ local function handleRotRotateEvents(event)
 
         CurrentFileName = getFileNameByIndex()
         NumberOfLines = getCurrentNumberOfLines()
-        CurrentLineIndex = NumberOfLines    -- Go the the last line
+        CurrentLineIndex = NumberOfLines -- Go the the last line
         Columns, ColumnsMU = parseColumns() -- In case we have files with different telemetry settings
 
         -- Reset if out of range
