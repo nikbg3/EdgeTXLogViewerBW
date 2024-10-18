@@ -325,30 +325,66 @@ local function getMixMaxInCurrentSlice(values)
     return findMinMaxHelper(values, minIndex, maxIndex)
 end
 
-local function drawChart()
-    local valuesUnfiltered = getAllCurrentValues()
-    local values = normalizeOutliers(valuesUnfiltered)
-
+local function ensureValues(values)
     lcd.clear()
     drawHeader()
 
     if values == nil or #values == 0 then
         lcd.drawText(11, 28, "No numeric available")
-        return
+        return false
     end
+    return true
+end
 
-    if #values == 1 then -- We have just a single value. Add one extra for the drawing
-        values[#values + 1] = values[1]
+local lastAvgValuesCacheIndex = ''
+local lastAvgValues = nil
+local lastValues = nil
+local lastMinV = nil
+local lastMaxV = nil
+local function drawChart()
+    local cacheIndex = CurrentFileName .. CurrentColumnIndex
+
+    local avgValues = nil
+    local minV = nil
+    local maxV = nil
+    local values = nil
+
+    if cacheIndex == lastAvgValuesCacheIndex then
+        avgValues = lastAvgValues
+        values = lastValues
+        minV = lastMinV
+        maxV = lastMaxV
+
+        if not ensureValues(values) then
+            return
+        end
+    else
+        local valuesUnfiltered = getAllCurrentValues()
+        values = normalizeOutliers(valuesUnfiltered)
+
+        if not ensureValues(values) then
+            return
+        end
+
+        if #values == 1 then -- We have just a single value. Add one extra for the drawing
+            values[#values + 1] = values[1]
+        end
+
+        local minValues = (CHART_X_MAX - CHART_Y_MIN) / CHART_LINE_SIZE_MIN
+        if #values < minValues then -- We have less values than pixels available
+            ChartLineSize = math.ceil((CHART_X_MAX - CHART_Y_MIN) / (#values - 1))
+        else                        -- We have enough values for the pixels available
+            ChartLineSize = CHART_LINE_SIZE_MIN
+        end
+
+        avgValues, minV, maxV = getChartValuesAll(values)
+
+        lastAvgValuesCacheIndex = cacheIndex
+        lastAvgValues = avgValues
+        lastValues = values
+        lastMinV = minV
+        lastMaxV = maxV
     end
-
-    local minValues = (CHART_X_MAX - CHART_Y_MIN) / CHART_LINE_SIZE_MIN
-    if #values < minValues then -- We have less values than pixels available
-        ChartLineSize = math.ceil((CHART_X_MAX - CHART_Y_MIN) / (#values - 1))
-    else                        -- We have enough values for the pixels available
-        ChartLineSize = CHART_LINE_SIZE_MIN
-    end
-
-    local avgValues, minV, maxV = getChartValuesAll(values)
 
     if minV == maxV then -- We have a constant for a value. Spread them a bit
         minV = minV - 1
