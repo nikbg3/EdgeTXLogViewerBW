@@ -5,7 +5,8 @@ local REGEX_LINES_WITHOUT_NEW_LINE = '\n([^\n]*)$'
 local REGEX_CSV_CELL = '[^,]+'
 local REGEX_LOG_EXTENTION = '.csv$'
 local REGEX_COLUMN_MU = '^(.-)%s*%((.-)%)$'
-local TIME_STRING = '%02d-%02d,%02d:%02d:%02d'
+local REGEX_TIME = '[^,]+,[^,]+'
+local TIME_STRING = '%02d/%02d,%02d:%02d:%02d'
 local CHART_X_MIN = 0
 local CHART_X_MAX = 128
 local CHART_Y_MIN = 16
@@ -62,8 +63,18 @@ local function getFileTimeString()
 end
 
 local function getCurrentLineTimeString()
-    local result = string.sub(CurrentLineText, 6, 19)
-    return result
+    -- Regex positive lookbehind is not supported in LUA. THerefore, did it like that
+    print(CurrentLineText)
+    for line in string.gmatch(CurrentLineText, REGEX_TIME) do
+        local isFirst = false
+        for columnText in string.gmatch(line, REGEX_CSV_CELL) do
+        if isFirst then
+            return columnText
+        end
+        isFirst = true
+        end
+    end
+    return '????' -- No date time was matched
 end
 
 local function parseColumns()
@@ -360,11 +371,12 @@ local function drawChart()
         end
     else
         local valuesUnfiltered = getAllCurrentValues()
-        values = normalizeOutliers(valuesUnfiltered)
 
-        if not ensureValues(values) then
+        if not ensureValues(valuesUnfiltered) then
             return
         end
+
+        values = normalizeOutliers(valuesUnfiltered)
 
         if #values == 1 then -- We have just a single value. Add one extra for the drawing
             values[#values + 1] = values[1]
