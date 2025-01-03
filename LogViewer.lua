@@ -64,7 +64,6 @@ end
 
 local function getCurrentLineTimeString()
     -- Regex positive lookbehind is not supported in LUA. THerefore, did it like that
-    print(CurrentLineText)
     for line in string.gmatch(CurrentLineText, REGEX_TIME) do
         local isFirst = false
         for columnText in string.gmatch(line, REGEX_CSV_CELL) do
