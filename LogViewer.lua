@@ -67,10 +67,10 @@ local function getCurrentLineTimeString()
     for line in string.gmatch(CurrentLineText, REGEX_TIME) do
         local isFirst = false
         for columnText in string.gmatch(line, REGEX_CSV_CELL) do
-        if isFirst then
-            return columnText
-        end
-        isFirst = true
+            if isFirst then
+                return columnText
+            end
+            isFirst = true
         end
     end
     return '????' -- No date time was matched
@@ -518,6 +518,9 @@ end
 
 local function init()
     NumberOfLogFiles = getNumberOfLogFiles()
+    if NumberOfLogFiles == 0 then
+        return
+    end
     CurrentFileIndex = NumberOfLogFiles -- Go the the last line
     CurrentColumnIndex = 1
     CurrentFileName = getFileNameByIndex()
@@ -529,13 +532,18 @@ local function init()
 end
 
 local function run(event)
-    if FirstRun then
-        drawValueScreen()
-        FirstRun = false
+    if NumberOfLogFiles == 0 then
+        lcd.clear()
+        drawHeader()
+        lcd.drawText(1, 25, "No log files")
+    else
+        if FirstRun then
+            drawValueScreen()
+            FirstRun = false
+        end
+
+        handleEvents(event)
     end
-
-    handleEvents(event)
-
     return 0
 end
 
